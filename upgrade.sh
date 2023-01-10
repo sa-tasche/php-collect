@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+# Note: If you see this error on Ubuntu, don't worry; we're using a macOS-friendly sed syntax
+#       that throws errors but still works fine on Linux.
+#
+#       sed: can't read : No such file or directory
+
 ##
  # tightenco/collect upgrader script
  #
@@ -19,9 +24,13 @@ shopt -s dotglob
 ##
  # App
  #
- 
+
 function main()
 {
+    # a='a.b.y'
+    # echo ${a##*.}
+    # exit
+
     echo "Upgrading..."
 
     checkDependencies
@@ -45,6 +54,8 @@ function main()
     copyStubs
 
     downloadTests
+
+    copyTestSupportClasses
 
     renameNamespace
 
@@ -93,44 +104,69 @@ function prepareEnvironment()
     repositorySrcDir=${repositoryDir}/src
     collectionZip=${rootDir}/$project-${collectionVersion}.zip
     collectionZipUrl=https://github.com/$vendor/$project/archive/v${collectionVersion}.zip
+    # If a new version has not been tagged, use the following
+    # collectionZipUrl=https://github.com/$vendor/$project/archive/${collectionVersion}.zip
     oldNamespaceDir=${repositorySrcDir}/${oldNamespace}
     newNamespaceDir=${baseDir}/${newDir}
     testsDir=${rootDir}/tests
     testsBaseUrl=https://raw.githubusercontent.com/${vendor}/${project}/v${collectionVersion}/tests
+    # If a new version has not been tagged, use the following
+    # testsBaseUrl=https://raw.githubusercontent.com/${vendor}/${project}/${collectionVersion}/tests
     stubsDir=${rootDir}/stubs
     aliasFile=${baseDir}/${newDir}/Support/alias.php
 carriageReturn="
 "
 
     classes=(
-        'Support/Collection'
         'Support/Arr'
-        'Support/Carbon'
+        'Support/Collection'
+        'Support/Enumerable'
         'Support/HigherOrderCollectionProxy'
-        'Support/HtmlString'
-        'Support/Debug/Dumper'
-        'Support/Debug/HtmlDumper'
+        'Support/LazyCollection'
     )
 
-    excludeFromAliases=(
-        'Support/Carbon'
+    classesNotInSupport=(
+        'Conditionable/HigherOrderWhenProxy'
     )
 
     traits=(
-        'Support/Traits/Macroable'
+        'Support/Traits/EnumeratesValues'
+    )
+
+    supportTraits=(
+        'Conditionable/Traits/Conditionable'
+        'Macroable/Traits/Macroable'
+        'Support/Traits/Tappable'
     )
 
     contracts=(
         'Contracts/Support/Arrayable'
         'Contracts/Support/Jsonable'
         'Contracts/Support/Htmlable'
+        'Contracts/Support/CanBeEscapedWhenCastToString'
     )
 
     tests=(
+        'Support/Enums.php'
         'Support/SupportCollectionTest.php'
         'Support/SupportArrTest.php'
         'Support/SupportMacroableTest.php'
-        'Support/SupportCarbonTest.php'
+        'Support/SupportLazyCollectionTest.php'
+        'Support/SupportLazyCollectionIsLazyTest.php'
+        'Support/Concerns/CountsEnumerations.php'
+    )
+
+    testSupportClasses=(
+        'Support/Carbon'
+        'Support/HigherOrderTapProxy'
+        'Support/HtmlString'
+        'Support/Str'
+        'Support/Stringable'
+    )
+
+    testSupportClassesInExtractedCollections=(
+        'Support/ItemNotFoundException'
+        'Support/MultipleItemsFoundException'
     )
 
     stubs=(
@@ -169,6 +205,7 @@ function displayVariables()
     echo testsBaseUrl = ${testsBaseUrl}
 
     echo "---------------------------------------------"
+    echo ""
 }
 
 ##
@@ -210,7 +247,7 @@ function extractZip()
 {
     echo "-- Extracting $project.zip..."
 
-    unzip ${collectionZip} -d ${rootDir} >${logFile} 2>&1
+    unzip -u ${collectionZip} -d ${rootDir} >${logFile} 2>&1
 
     rm ${collectionZip}
 
@@ -222,14 +259,28 @@ function extractZip()
  #
 function copyClasses()
 {
-    echo "-- Copying classes and contracts..."
+    echo "-- Copying classes ..."
 
     for class in ${classes[@]}; do
-        echo "Copying ${oldNamespaceDir}.php/${class}.php..."
+        classSrc="${class/Support/Collections}"
+        echo "Copying ${oldNamespaceDir}/${classSrc}.php..."
 
-        mkdir -p $(dirname ${newNamespaceDir}/${class})
+        mkdir -p $(dirname ${newNamespaceDir}/${class}.php)
 
-        cp ${oldNamespaceDir}/${class}.php ${newNamespaceDir}/${class}.php
+        cp ${oldNamespaceDir}/${classSrc}.php $newNamespaceDir/$class.php
+
+        chmod 644 ${newNamespaceDir}/${class}.php
+    done
+
+    for class in ${classesNotInSupport[@]}; do
+        classSrc="${class/Support/Collections}"
+        echo "Copying ${oldNamespaceDir}/${classSrc}.php..."
+
+        mkdir -p $(dirname ${newNamespaceDir}/${class}.php)
+
+        cp ${oldNamespaceDir}/${classSrc}.php $newNamespaceDir/$class.php
+
+        chmod 644 ${newNamespaceDir}/${class}.php
     done
 }
 
@@ -257,11 +308,22 @@ function copyTraits()
     echo "-- Copying traits..."
 
     for trait in ${traits[@]}; do
-        echo "Copying ${oldNamespaceDir}/${trait}.php..."
+        traitSrc="${trait/Support/Collections}"
+        echo "Copying ${oldNamespaceDir}/${traitSrc}.php..."
 
         mkdir -p $(dirname ${newNamespaceDir}/${trait})
 
-        cp ${oldNamespaceDir}/${trait}.php ${newNamespaceDir}/${trait}.php
+        cp ${oldNamespaceDir}/${traitSrc}.php ${newNamespaceDir}/${trait}.php
+    done
+
+    for traitSrc in ${supportTraits[@]}; do
+        traitClassName="${traitSrc##*/}"
+
+        echo "Copying ${oldNamespaceDir}/${traitSrc}.php... to ${newNamespaceDir}/Support/Traits/${traitClassName}.php"
+
+        mkdir -p $(dirname ${newNamespaceDir}/${traitClassName})
+
+        cp ${oldNamespaceDir}/${traitSrc}.php ${newNamespaceDir}/Support/Traits/${traitClassName}.php
     done
 }
 
@@ -278,6 +340,8 @@ function copyStubs()
         mkdir -p $(dirname ${rootDir}/${stub})
 
         cp ${stubsDir}/${stub} ${rootDir}/${stub}
+
+        chmod 644 ${rootDir}/${stub}
     done
 }
 
@@ -296,9 +360,7 @@ function fillAliases()
     done
 
     for class in ${classes[@]}; do
-        if [[ ! " ${excludeFromAliases[@]} " =~ " ${class} " ]]; then
-            aliases="${aliases}${indent}${newNamespace}/${class}::class => ${oldNamespace}/${class}::class,CARRIAGERETURN"
-        fi
+        aliases="${aliases}${indent}${newNamespace}/${class}::class => ${oldNamespace}/${class}::class,CARRIAGERETURN"
     done
 
     for trait in ${traits[@]}; do
@@ -319,7 +381,7 @@ function getCurrentVersionFromGitHub()
     echo Getting current version from $repository...
 
     if [ -z "$requestedVersion" ]; then
-        collectionVersion=$(git ls-remote $repository | grep tags/ | grep -v {} | cut -d \/ -f 3 | cut -d v -f 2  | grep -v RC | grep -vi beta | sort -t. -k 1,1n -k 2,2n -k 3,3n| tail -1)
+        collectionVersion=$(git ls-remote $repository --tags  v9.33\* | grep tags/ | grep -v {} | cut -d \/ -f 3 | cut -d v -f 2  | grep -v RC | grep -vi beta | sort -t. -k 1,1n -k 2,2n -k 3,3n| tail -1)
     else
         collectionVersion=$requestedVersion
     fi
@@ -344,6 +406,42 @@ function downloadTests()
 }
 
 ##
+ # Copy support files for tests
+ #
+function copyTestSupportClasses()
+{
+    echo "-- Copying support files for tests..."
+    testSupportDirectory='./tests/files'
+
+    for class in ${testSupportClasses[@]}; do
+        echo "Copying ${oldNamespaceDir}/${class}..."
+
+        mkdir -p $(dirname $testSupportDirectory/$class)
+
+        cp ${oldNamespaceDir}/${class}.php ${testSupportDirectory}/$class.php
+
+        chmod 644 ${testSupportDirectory}/${class}.php
+    done
+
+    for class in ${testSupportClassesInExtractedCollections[@]}; do
+        echo "Copying ${oldNamespaceDir}/${class} (from extracted Collections)..."
+
+        mkdir -p $(dirname $testSupportDirectory/$class)
+
+        # Extract these classes from Illuminate/Collections, even though they end up in
+        # the Illuminate/Support namespace
+        movedClassFilename=${class/Support/Collections}
+
+        cp ${oldNamespaceDir}/${movedClassFilename}.php ${testSupportDirectory}/$class.php
+
+        chmod 644 ${testSupportDirectory}/${class}.php
+    done
+
+    # @todo: do this more cleanly
+    find ./tests/files -name "*.php" -exec sed -i "" -e "s|Illuminate\\\Support|/\*--- OLDNAMESPACE ---\*/\\\Support|g" {} \;
+}
+
+##
  # Rename namespace on all files
  #
 function renameNamespace()
@@ -352,7 +450,31 @@ function renameNamespace()
 
     find ${newNamespaceDir} -name "*.php" -exec sed -i "" -e "s|${oldNamespace}|${newNamespace}|g" {} \;
     find ${testsDir} -name "*.php" -exec sed -i "" -e "s|${oldNamespace}|${newNamespace}|g" {} \;
+    find ${testsDir} -name "*.php" -exec sed -i "" -e "s|/\*--- OLDNAMESPACE ---\*/|${oldNamespace}|g" {} \;
     find ${newNamespaceDir} -name "*.php" -exec sed -i "" -e "s|/\*--- OLDNAMESPACE ---\*/|${oldNamespace}|g" {} \;
+
+    # rename the namespaces of Conditional
+    find ${newNamespaceDir} -name "*.php" -exec sed -i "" -e "s|Support\\\HigherOrderWhenProxy|Conditionable\\\HigherOrderWhenProxy|g" {} \;
+    find ${newNamespaceDir} -name "HigherOrderWhenProxy.php" -exec sed -i "" -e "s|Tightenco\\\Collect\\\Support|Tightenco\\\Collect\\\Conditionable|g" {} \;
+
+    echo "-- Expand the alias for Stringable to check for Illuminate, not Tightenco, Stringable"
+
+    find ${newNamespaceDir} -name "*.php" -exec sed -i "" -e "s|instanceof\ Stringable|instanceof\ \\\Illuminate\\\Support\\\Stringable|g" {} \;
+
+    echo "-- Reigning the renaming back in; bringing Carbon, HtmlString, Str back to Illuminate/Support"
+
+    # @todo: do this more cleanly
+    # Just in tests, fix namespaces for classes that are no longer provided in collections as of 8.0+ Illuminate\Support\Traits\Macroable, etc
+    find ${testsDir} -name "*.php" -exec sed -i "" -e "s|Tightenco\\\Collect\\\Support\\\Carbon|Illuminate\\\Support\\\Carbon|g" {} \;
+    find ${testsDir} -name "*.php" -exec sed -i "" -e "s|Tightenco\\\Collect\\\Support\\\HtmlString|Illuminate\\\Support\\\HtmlString|g" {} \;
+    find ${testsDir} -name "*.php" -exec sed -i "" -e "s|Tightenco\\\Collect\\\Support\\\Str|Illuminate\\\Support\\\Str|g" {} \;
+    find ${testsDir} -name "*.php" -exec sed -i "" -e "s|Illuminate\\\Support\\\Traits\\\Conditionable|Tightenco\\\Collect\\\Support\\\Traits\\\Conditionable|g" {} \;
+    find ${testsDir} -name "*.php" -exec sed -i "" -e "s|Illuminate\\\Support\\\Traits\\\Macroable|Tightenco\\\Collect\\\Support\\\Traits\\\Macroable|g" {} \;
+    find ${testsDir} -name "*.php" -exec sed -i "" -e "s|Illuminate\\\Support\\\Traits\\\Tappable|Tightenco\\\Collect\\\Support\\\Traits\\\Tappable|g" {} \;
+
+    find ${testSupportDirectory} -name "HigherOrderTapProxy.php" -exec sed -i "" -e "s|Illuminate\\\Support|Tightenco\\\Collect\\\Support|g" {} \;
+    find ${testSupportDirectory} -name "ItemNotFoundException.php" -exec sed -i "" -e "s|Illuminate\\\Support|Tightenco\\\Collect\\\Support|g" {} \;
+    find ${testSupportDirectory} -name "MultipleItemsFoundException.php" -exec sed -i "" -e "s|Illuminate\\\Support|Tightenco\\\Collect\\\Support|g" {} \;
 }
 
 ##
